@@ -60,12 +60,16 @@ func secureUnmarshal(data []byte, v interface{}) error {
 }
 
 var (
-	drawMu         sync.Mutex
-	webFrame       *image.RGBA
-	configMutex    sync.RWMutex
-	defaultConfig  Config                 // loaded from default_config.json
-	userOverrides  map[string]interface{} // raw overrides from user_config.json
-	userJsonConfig = ""
+	drawMu               sync.Mutex
+	webFrame             *image.RGBA
+	configMutex          sync.RWMutex
+	defaultConfig        Config                 // loaded from default_config.json
+	userOverrides        map[string]interface{} // raw overrides from user_config.json
+	userJsonConfig       = ""
+
+	// Runtime brightness override system
+	runtimeBrightnessMu   sync.RWMutex
+	runtimeMaxBrightness  *int   // nil = use config.json, non-nil = override value
 )
 
 func serveFrame(c *fiber.Ctx) error {
@@ -620,6 +624,105 @@ func setShowSMS(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "ok", "showSMS": raw})
 }
 
+func getMaxBacklight(c *fiber.Ctx) error {
+	// Check for runtime override first
+	runtimeBrightnessMu.RLock()
+	if runtimeMaxBrightness != nil {
+		brightness := *runtimeMaxBrightness
+		runtimeBrightnessMu.RUnlock()
+		return c.JSON(fiber.Map{
+			"status": "ok",
+			"max_brightness": brightness,
+			"source": "runtime_override",
+		})
+	}
+	runtimeBrightnessMu.RUnlock()
+
+	// Use config.json value
+	configMutex.RLock()
+	maxBrightness := cfg.ScreenMaxBrightness
+	configMutex.RUnlock()
+
+	return c.JSON(fiber.Map{
+		"status": "ok",
+		"max_brightness": maxBrightness,
+		"source": "config",
+	})
+}
+
+func setMaxBacklight(c *fiber.Ctx) error {
+	raw := c.FormValue("max_brightness")
+	if raw == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"status":  "error",
+			"message": "max_brightness parameter is required",
+		})
+	}
+
+	maxBrightness, err := strconv.Atoi(raw)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"status":  "error",
+			"message": "max_brightness must be a valid integer",
+		})
+	}
+
+	if maxBrightness < 0 || maxBrightness > 100 {
+		return c.Status(400).JSON(fiber.Map{
+			"status":  "error",
+			"message": "max_brightness must be between 0 and 100",
+		})
+	}
+
+	// Set runtime override instead of modifying config
+	runtimeBrightnessMu.Lock()
+	runtimeMaxBrightness = &maxBrightness
+	runtimeBrightnessMu.Unlock()
+
+	return c.JSON(fiber.Map{
+		"status": "ok",
+		"max_brightness": maxBrightness,
+		"source": "runtime_override",
+		"message": "Runtime brightness override set (does not modify config.json)",
+	})
+}
+
+func resetMaxBacklight(c *fiber.Ctx) error {
+	// Clear runtime override to return to config.json values
+	runtimeBrightnessMu.Lock()
+	runtimeMaxBrightness = nil
+	runtimeBrightnessMu.Unlock()
+
+	// Get current config value to return
+	configMutex.RLock()
+	maxBrightness := cfg.ScreenMaxBrightness
+	configMutex.RUnlock()
+
+	return c.JSON(fiber.Map{
+		"status": "ok",
+		"max_brightness": maxBrightness,
+		"source": "config",
+		"message": "Runtime brightness override cleared, now following config.json",
+	})
+}
+
+// getEffectiveMaxBrightness returns the runtime override if set, otherwise config value
+func getEffectiveMaxBrightness() int {
+	runtimeBrightnessMu.RLock()
+	if runtimeMaxBrightness != nil {
+		brightness := *runtimeMaxBrightness
+		runtimeBrightnessMu.RUnlock()
+		return brightness
+	}
+	runtimeBrightnessMu.RUnlock()
+
+	// Return config value
+	configMutex.RLock()
+	maxBrightness := cfg.ScreenMaxBrightness
+	configMutex.RUnlock()
+	return maxBrightness
+}
+
 func httpServer(port string) {
 	app := fiber.New()
 
@@ -644,6 +747,9 @@ func httpServer(port string) {
 	app.Post("/api/v1/go_set_ping_sites", setPingSites)
 	app.Post("/api/v1/go_set_screen_dimmer_time", setScreenDimmerTime)
 	app.Post("/api/v1/go_set_show_sms", setShowSMS)
+	app.Get("/api/v1/go_get_max_backlight", getMaxBacklight)
+	app.Post("/api/v1/go_set_max_backlight", setMaxBacklight)
+	app.Post("/api/v1/go_reset_max_backlight", resetMaxBacklight)
 
 	// Start server, retry if failed
 	var ln net.Listener

@@ -158,6 +158,62 @@ Comprehensive stdout logging shows:
 - **CS**: GPIO13
 - **Backlight**: PWM controlled
 
+## HTTP API Endpoints
+
+### Backlight Control
+
+#### Get Maximum Backlight
+```http
+GET /api/v1/go_get_max_backlight
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "max_brightness": 100
+}
+```
+
+#### Set Maximum Backlight
+```http
+POST /api/v1/go_set_max_backlight
+Content-Type: application/x-www-form-urlencoded
+
+max_brightness=75
+```
+
+**Parameters:**
+- `max_brightness` (required): Integer between 0-100
+
+**Success Response:**
+```json
+{
+  "status": "ok",
+  "max_brightness": 75
+}
+```
+
+**Error Response:**
+```json
+{
+  "status": "error",
+  "message": "max_brightness must be between 0 and 100"
+}
+```
+
+**Example Usage:**
+```bash
+# Get current max backlight
+curl http://localhost:8080/api/v1/go_get_max_backlight
+
+# Set max backlight to 80%
+curl -X POST -d "max_brightness=80" http://localhost:8080/api/v1/go_set_max_backlight
+
+# Set max backlight to minimum (1%)
+curl -X POST -d "max_brightness=1" http://localhost:8080/api/v1/go_set_max_backlight
+```
+
 ## Software Architecture
 
 ### Key Features

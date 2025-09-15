@@ -185,12 +185,15 @@ func setBacklight(brightness int) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// clamp into 0..100
+	// Get effective max brightness (runtime override or config)
+	effectiveMaxBrightness := getEffectiveMaxBrightness()
+
+	// clamp into 0..effectiveMaxBrightness
 	switch {
 	case brightness < cfg.ScreenMinBrightness:
 		brightness = cfg.ScreenMinBrightness
-	case brightness > cfg.ScreenMaxBrightness:
-		brightness = cfg.ScreenMaxBrightness
+	case brightness > effectiveMaxBrightness:
+		brightness = effectiveMaxBrightness
 	}
 
 	if brightness == lastLogical {
