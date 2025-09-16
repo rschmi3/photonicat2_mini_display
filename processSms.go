@@ -101,9 +101,16 @@ func collectAndDrawSms(cfg *Config) int {
 	return numPages
 }
 
-func getJsonContent(_ *Config) string {
+func getJsonContent(cfg *Config) string {
+	// Use config value or default to 10 if not specified
+	smsLimit := 10
+	if cfg != nil && cfg.SmsLimitForScreen > 0 {
+		smsLimit = cfg.SmsLimitForScreen
+	}
+
 	// 1. Make the request
-	resp, err := localHTTPClient.Get("http://localhost/api/v2/sms/list.json?n=10")
+	url := fmt.Sprintf("http://localhost/api/v2/sms/list.json?n=%d", smsLimit)
+	resp, err := localHTTPClient.Get(url)
 	if err != nil {
 		log.Printf("GET /sms/list.json failed: %v", err)
 		// Return last successful result if we have one, otherwise return empty
@@ -549,11 +556,33 @@ func wrapText(text string, maxWidth int, face font.Face) []string {
 }
 
 func getSmsPages() {
+	firstFetchComplete := false
+	startupRetryInterval := 3 * time.Second
+
 	getSmsInterval := func() time.Duration {
+		if !firstFetchComplete {
+			return startupRetryInterval
+		}
 		if idleState == STATE_IDLE {
 			return baseSmsInterval * time.Duration(idleMultiplier)
 		}
 		return baseSmsInterval
+	}
+
+	// Try to collect SMS immediately on startup
+	if cfg.ShowSms {
+		log.Println("Startup: attempting immediate SMS fetch...")
+		lenSmsPagesImages = collectAndDrawSms(&cfg)
+		if lenSmsPagesImages == 0 {
+			lenSmsPagesImages = 1
+		}
+		if lenSmsPagesImages > 0 && lastSuccessfulSmsJsonContent != "" {
+			firstFetchComplete = true
+			log.Println("Startup: SMS fetch successful on first try, lenSmsPagesImages:", lenSmsPagesImages)
+		} else {
+			log.Println("Startup: SMS fetch failed, will retry every 3 seconds...")
+		}
+		totalNumPages = cfgNumPages + lenSmsPagesImages
 	}
 
 	ticker := time.NewTicker(getSmsInterval())
@@ -563,12 +592,24 @@ func getSmsPages() {
 		select {
 		case <-ticker.C:
 			if cfg.ShowSms {
-				//log.Println("Collecting SMS")
+				if !firstFetchComplete {
+					log.Println("Startup retry: attempting SMS fetch...")
+				}
 				lenSmsPagesImages = collectAndDrawSms(&cfg)
 				if lenSmsPagesImages == 0 {
 					lenSmsPagesImages = 1
 				}
-				log.Println("collect lenSmsPagesImages:", lenSmsPagesImages)
+
+				// Check if this is the first successful fetch
+				if !firstFetchComplete && lastSuccessfulSmsJsonContent != "" {
+					firstFetchComplete = true
+					log.Println("First successful SMS fetch! Switching to normal interval. lenSmsPagesImages:", lenSmsPagesImages)
+					ticker.Stop()
+					ticker = time.NewTicker(getSmsInterval())
+				} else {
+					log.Println("collect lenSmsPagesImages:", lenSmsPagesImages)
+				}
+
 				totalNumPages = cfgNumPages + lenSmsPagesImages
 			} else {
 				// SMS disabled - only JSON config pages

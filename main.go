@@ -302,6 +302,7 @@ type Config struct {
 	PingSite1                        string          `json:"ping_site1"`
 	DisplayTemplate                  DisplayTemplate `json:"display_template"`
 	ShowSms                          bool            `json:"show_sms"`
+	SmsLimitForScreen                int             `json:"sms_limit_for_screen"`
 }
 
 // FontConfig holds parameters for a font.
