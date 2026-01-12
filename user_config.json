@@ -11,7 +11,7 @@
           },
           "font": "tiny",
           "color": [255, 229, 0],
-          "enable": 1
+          "enable": 0
         },
         {
           "type": "text",
@@ -24,7 +24,7 @@
           "units": "MB",
           "data_key": "DiskFreeMB",
           "units_font": "tiny",
-          "enable": 1
+          "enable": 0
         }
       ]
     }
@@ -34,7 +34,7 @@
       {
         "type": "command",
         "name": "DiskFree",
-        "enabled": false,
+        "enabled": 0,
         "config": {
           "command": "./get_disk_free_mb.sh",
           "interval": 10,
@@ -46,7 +46,7 @@
       {
         "type": "command",
         "name": "DiskFreeAlternative",
-        "enabled": true,
+        "enabled": 0,
         "config": {
           "command": "df / | awk 'NR==2 {print int($4/1024)}'",
           "interval": 10,
@@ -58,7 +58,7 @@
       {
         "type": "http",
         "name": "RemoteDiskMetrics",
-        "enabled": false,
+        "enabled": 0,
         "config": {
           "url": "http://your-server:8080/metrics/disk",
           "method": "GET",
@@ -76,7 +76,7 @@
       {
         "type": "env",
         "name": "EnvironmentMetrics",
-        "enabled": false,
+        "enabled": 0,
         "config": {
           "variables": [
             {
@@ -89,7 +89,7 @@
       {
         "type": "json_file",
         "name": "JSONFileMetrics",
-        "enabled": false,
+        "enabled": 0,
         "config": {
           "file_path": "/tmp/metrics.json",
           "watch_interval": 5,
@@ -103,7 +103,7 @@
       }
     ],
     "global_settings": {
-      "enable_logging": true,
+      "enable_logging": 1,
       "error_retry_interval": 30,
       "max_retries": 3
     }
