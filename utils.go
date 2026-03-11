@@ -646,11 +646,11 @@ func mergeConfigs() error {
 
 	log.Println("JSON deep merge completed successfully")
 
-	// Default ping sites if missing
-	if cfg.PingSite0 == "" {
+	// Default ping sites if missing or too short to be valid
+	if len(cfg.PingSite0) <= 2 {
 		cfg.PingSite0 = "taobao.com"
 	}
-	if cfg.PingSite1 == "" {
+	if len(cfg.PingSite1) <= 2 {
 		cfg.PingSite1 = "photonicat.com"
 	}
 
