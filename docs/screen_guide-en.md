@@ -16,7 +16,7 @@ Phonicat devices support fully customizable screen display content through JSON 
   "screen_dimmer_time_on_dc_seconds": 86400,
   "screen_max_brightness": 100,
   "screen_min_brightness": 0,
-  "ping_site0": "taobao.com",
+  "ping_site0": "1.1.1.1",
   "ping_site1": "photonicat.com",
   "show_sms": true,
   "sms_limit_for_screen": 5,
