@@ -2,6 +2,52 @@
 
 A Go-based display driver for the Photonicat2 mini display, providing real-time system information, network status, and device metrics on a small LCD screen.
 
+## Fork Changes
+
+This fork patches WAN upload/download speed tracking for setups where the
+active WAN interface is not `eth0` or `wwan0`.
+
+### Background
+
+The Photonicat 2 has two independent speed tracking systems, both broken for
+non-standard WAN interfaces:
+
+| Component | Hardcoded to | Fixable? |
+|-----------|-------------|----------|
+| Web UI `up_speed`/`down_speed` (`network_stats.pyc`) | `usb0`, `wwan0`, `eth2` | No — closed source |
+| Display `WanUP`/`WanDOWN` (`processData.go`) | `eth0`, `wwan0` via dashboard API | Yes — this fork |
+
+On OpenWRT, the original `collectWANNetworkSpeed()` read `up_speed`/`down_speed`
+from `pcat-manager-web`'s `dashboard.json` API (`http://localhost:80/api/v1/dashboard.json`),
+computed by the closed-source `network_stats.pyc`. That module only tracks
+`usb0`, `wwan0`, and `eth2`, so `WanUP`/`WanDOWN` always showed `0` or `-` for
+any other WAN interface.
+
+### The Fix
+
+- `getWANInterface()` reads `/proc/net/route` directly (no subprocess) to find
+  the active default-route interface on both OpenWRT and Debian
+- `collectWANNetworkSpeed()` always uses `getNetworkSpeed()` via
+  `/sys/class/net/<iface>/statistics/` reads, bypassing the closed-source API
+  entirely
+- The interface is re-detected on every 3-second collection cycle so mwan3
+  failover is picked up automatically
+
+> Note: The web UI `up_speed`/`down_speed` fields remain `0` for non-standard
+> WAN interfaces — that code is closed source and out of scope. Only the display
+> binary is fixed here.
+
+### NixOS Build
+
+A `flake.nix` is included for cross-compiling to `aarch64-linux-musl` from an
+x86_64 NixOS host. The upstream `compile.sh` still works for non-Nix builds.
+
+```sh
+nix build .#pcat2-display          # cross-compile
+nix run .#deploy-pcat2             # deploy (default device IP: 172.16.0.1)
+nix run .#rollback-pcat2           # rollback if needed
+```
+
 ## 🚀 Quick Start
 
 ### Build and Test

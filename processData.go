@@ -370,17 +370,37 @@ func formatSpeed(mbps float64) (string, string) {
 }
 
 func getWANInterface() (string, error) {
-	if isOpenWRT() {
-		return "br-lan", nil
+	// Primary: read /proc/net/route directly — no subprocess, works on OpenWRT and Debian.
+	// Find the row with Destination=00000000 (0.0.0.0) and the RTF_GATEWAY flag (0x0002).
+	f, err := os.Open("/proc/net/route")
+	if err == nil {
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		scanner.Scan() // skip header line
+		for scanner.Scan() {
+			fields := strings.Fields(scanner.Text())
+			if len(fields) < 4 {
+				continue
+			}
+			flags, ferr := strconv.ParseUint(fields[3], 16, 32)
+			if ferr != nil {
+				continue
+			}
+			// Destination == 0.0.0.0 and RTF_GATEWAY flag set
+			if fields[1] == "00000000" && (flags&0x0002) != 0 {
+				return fields[0], nil
+			}
+		}
 	}
+
+	// Fallback: use ip route show default (for systems where /proc/net/route is unavailable)
 	out, err := secureExecCommand("ip", "route", "show", "default")
 	if err != nil {
 		return "", err
 	}
-
 	fields := strings.Fields(string(out))
 	for i, field := range fields {
-		if field == "dev" && (i+1) < len(fields) {
+		if field == "dev" && i+1 < len(fields) {
 			return fields[i+1], nil
 		}
 	}
@@ -389,52 +409,32 @@ func getWANInterface() (string, error) {
 }
 
 func collectWANNetworkSpeed() {
-	var err error
-	if isOpenWRT() {
-		upSpeed, ok1 := globalData.Load("UpSpeedBps")
-		downSpeed, ok2 := globalData.Load("DownSpeedBps")
-		if !ok1 || !ok2 {
-			log.Printf("Could not get WAN network speed data\n")
-			globalData.Store("WanUP", "-")
-			globalData.Store("WanDOWN", "-")
-			globalData.Store("WanUP_Unit", "")
-			globalData.Store("WanDOWN_Unit", "")
-		} else {
-			wanUPVal, wanUPUnit := formatSpeed(upSpeed.(float64) / 1024 / 1024 * 8)
-			wanDOWNVal, wanDOWNUnit := formatSpeed(downSpeed.(float64) / 1024 / 1024 * 8)
-
-			globalData.Store("WanUP", wanUPVal)
-			globalData.Store("WanDOWN", wanDOWNVal)
-			globalData.Store("WanUP_Unit", wanUPUnit)
-			globalData.Store("WanDOWN_Unit", wanDOWNUnit)
-		}
-	} else {
-		// Cache WAN interface to avoid repeated lookups
-		if wanInterface == "" || wanInterface == "null" {
-			wanInterface, err = getWANInterface()
-			if err != nil {
-				log.Printf("Could not get WAN interface: %v\n", err)
-				globalData.Store("WanUP", "0")
-				globalData.Store("WanDOWN", "0")
-				time.Sleep(5 * time.Second) // prevent infinite loop
-				return
-			}
-		}
-
-		netData, err := getNetworkSpeed(wanInterface)
-		if err != nil {
-			log.Printf("Could not get network speed: %v\n", err)
-			globalData.Store("WanUP", "0")
-			globalData.Store("WanDOWN", "0")
-			return
-		}
-		wanUPVal, wanUPUnit := formatSpeed(netData.UploadMbps)
-		wanDOWNVal, wanDOWNUnit := formatSpeed(netData.DownloadMbps)
-		globalData.Store("WanUP", wanUPVal)
-		globalData.Store("WanDOWN", wanDOWNVal)
-		globalData.Store("WanUP_Unit", wanUPUnit)
-		globalData.Store("WanDOWN_Unit", wanDOWNUnit)
+	// Detect the active WAN interface on every call so mwan3 failover is
+	// picked up automatically (e.g. phy0-sta0 → wwan0 on cellular failover).
+	iface, err := getWANInterface()
+	if err != nil {
+		log.Printf("Could not get WAN interface: %v\n", err)
+		globalData.Store("WanUP", "0")
+		globalData.Store("WanDOWN", "0")
+		return
 	}
+	// Keep the package-level wanInterface in sync so collectNetworkData()
+	// (data-usage stats) always measures the correct interface.
+	wanInterface = iface
+
+	netData, err := getNetworkSpeed(iface)
+	if err != nil {
+		log.Printf("Could not get network speed: %v\n", err)
+		globalData.Store("WanUP", "0")
+		globalData.Store("WanDOWN", "0")
+		return
+	}
+	wanUPVal, wanUPUnit := formatSpeed(netData.UploadMbps)
+	wanDOWNVal, wanDOWNUnit := formatSpeed(netData.DownloadMbps)
+	globalData.Store("WanUP", wanUPVal)
+	globalData.Store("WanDOWN", wanDOWNVal)
+	globalData.Store("WanUP_Unit", wanUPUnit)
+	globalData.Store("WanDOWN_Unit", wanDOWNUnit)
 }
 
 func collectFixedData() {
@@ -1205,19 +1205,19 @@ func pingICMP(host string) (int64, error) {
 		}
 		return -1, err
 	}
-	
+
 	stats := pinger.Statistics()
 	if stats.PacketsRecv == 0 {
 		return -2, nil // No packets received = timeout
 	}
-	
+
 	avgRtt := int64(stats.AvgRtt / time.Millisecond)
-	
+
 	// If ping took more than 3 seconds, treat as timeout
 	if avgRtt > 3000 {
 		return -2, nil
 	}
-	
+
 	// Return average round-trip time in milliseconds.
 	return avgRtt, nil
 }
@@ -1658,12 +1658,12 @@ func getOpenWrtDHCPClients() ([]string, error) {
 func getOpenWrtWifiClients() (string, error) {
 	// WiFi interfaces to check (up to 3 max)
 	interfaces := []string{
-		"wlan0", "wlan1", "wlan2",  // Standard wlan interfaces
+		"wlan0", "wlan1", "wlan2", // Standard wlan interfaces
 		"radio0", "radio1", "radio2", // Radio interfaces
 	}
-	
+
 	var allMacs []string
-	
+
 	// Try each interface
 	for _, iface := range interfaces {
 		out, err := secureExecCommand("iwinfo", iface, "assoclist")
@@ -1671,7 +1671,7 @@ func getOpenWrtWifiClients() (string, error) {
 			// Interface doesn't exist or no clients, continue to next
 			continue
 		}
-		
+
 		// Parse iwinfo output to extract MAC addresses
 		lines := strings.Split(string(out), "\n")
 		for _, line := range lines {
@@ -1698,7 +1698,7 @@ func getOpenWrtWifiClients() (string, error) {
 			}
 		}
 	}
-	
+
 	if len(allMacs) == 0 {
 		return "", fmt.Errorf("no WiFi clients found on any interface")
 	}
