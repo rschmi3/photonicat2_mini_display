@@ -39,78 +39,80 @@
         default = pcat2Display;
       };
 
-      # nix run .#deploy-pcat2
-      # Copies the binary to the device, backs up the existing one, installs,
-      # and restarts the display service.
-      apps.${system}.deploy-pcat2 = {
-        type = "app";
-        program = toString (pkgs.writeShellScript "deploy-pcat2" ''
-          set -euo pipefail
-          BINARY="${pcat2Display}/bin/photonicat2_mini_display"
-          HOST="${host}"
+      apps.${system} = {
+        # nix run .#deploy-pcat2
+        # Copies the binary to the device, backs up the existing one, installs,
+        # and restarts the display service.
+        deploy-pcat2 = {
+          type = "app";
+          program = toString (pkgs.writeShellScript "deploy-pcat2" ''
+            set -euo pipefail
+            BINARY="${pcat2Display}/bin/photonicat2_mini_display"
+            HOST="${host}"
 
-          echo "==> Binary: $BINARY"
-          ls -lh "$BINARY"
+            echo "==> Binary: $BINARY"
+            ls -lh "$BINARY"
 
-          echo ""
-          echo "==> Copying to device..."
-          ${pkgs.openssh}/bin/scp "$BINARY" "$HOST:/tmp/pcat2_mini_display_new"
+            echo ""
+            echo "==> Copying to device..."
+            ${pkgs.openssh}/bin/scp "$BINARY" "$HOST:/tmp/pcat2_mini_display_new"
 
-          echo "==> Installing on device..."
-          ${pkgs.openssh}/bin/ssh "$HOST" '
-            set -e
-            echo "  Stopping display service..."
-            /etc/init.d/pcat2-display-mini stop || true
+            echo "==> Installing on device..."
+            ${pkgs.openssh}/bin/ssh "$HOST" '
+              set -e
+              echo "  Stopping display service..."
+              /etc/init.d/pcat2-display-mini stop || true
 
-            echo "  Backing up current binary..."
-            cp /usr/bin/photonicat2_mini_display /usr/bin/photonicat2_mini_display.bak
+              echo "  Backing up current binary..."
+              cp /usr/bin/photonicat2_mini_display /usr/bin/photonicat2_mini_display.bak
 
-            echo "  Installing new binary..."
-            cp /tmp/pcat2_mini_display_new /usr/bin/photonicat2_mini_display
-            chmod +x /usr/bin/photonicat2_mini_display
-            rm /tmp/pcat2_mini_display_new
+              echo "  Installing new binary..."
+              cp /tmp/pcat2_mini_display_new /usr/bin/photonicat2_mini_display
+              chmod +x /usr/bin/photonicat2_mini_display
+              rm /tmp/pcat2_mini_display_new
 
-            echo "  Starting display service..."
-            /etc/init.d/pcat2-display-mini start
+              echo "  Starting display service..."
+              /etc/init.d/pcat2-display-mini start
 
-            echo "  Done."
-          '
-          echo ""
-          echo "==> Deployed successfully."
-          echo "    To rollback: nix run .#rollback-pcat2"
-        '');
-      };
+              echo "  Done."
+            '
+            echo ""
+            echo "==> Deployed successfully."
+            echo "    To rollback: nix run .#rollback-pcat2"
+          '');
+        };
 
-      # nix run .#rollback-pcat2
-      # Restores the .bak binary and restarts the service.
-      apps.${system}.rollback-pcat2 = {
-        type = "app";
-        program = toString (pkgs.writeShellScript "rollback-pcat2" ''
-          set -euo pipefail
-          HOST="${host}"
+        # nix run .#rollback-pcat2
+        # Restores the .bak binary and restarts the service.
+        rollback-pcat2 = {
+          type = "app";
+          program = toString (pkgs.writeShellScript "rollback-pcat2" ''
+            set -euo pipefail
+            HOST="${host}"
 
-          echo "==> Rolling back on device..."
-          ${pkgs.openssh}/bin/ssh "$HOST" '
-            set -e
-            if [ ! -f /usr/bin/photonicat2_mini_display.bak ]; then
-              echo "ERROR: no .bak found at /usr/bin/photonicat2_mini_display.bak"
-              exit 1
-            fi
-            echo "  Stopping display service..."
-            /etc/init.d/pcat2-display-mini stop || true
+            echo "==> Rolling back on device..."
+            ${pkgs.openssh}/bin/ssh "$HOST" '
+              set -e
+              if [ ! -f /usr/bin/photonicat2_mini_display.bak ]; then
+                echo "ERROR: no .bak found at /usr/bin/photonicat2_mini_display.bak"
+                exit 1
+              fi
+              echo "  Stopping display service..."
+              /etc/init.d/pcat2-display-mini stop || true
 
-            echo "  Restoring backup..."
-            cp /usr/bin/photonicat2_mini_display.bak /usr/bin/photonicat2_mini_display
-            chmod +x /usr/bin/photonicat2_mini_display
+              echo "  Restoring backup..."
+              cp /usr/bin/photonicat2_mini_display.bak /usr/bin/photonicat2_mini_display
+              chmod +x /usr/bin/photonicat2_mini_display
 
-            echo "  Starting display service..."
-            /etc/init.d/pcat2-display-mini start
+              echo "  Starting display service..."
+              /etc/init.d/pcat2-display-mini start
 
-            echo "  Done."
-          '
-          echo ""
-          echo "==> Rollback complete."
-        '');
+              echo "  Done."
+            '
+            echo ""
+            echo "==> Rollback complete."
+          '');
+        };
       };
     };
 }
