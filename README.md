@@ -30,8 +30,23 @@ any other WAN interface.
 - `collectWANNetworkSpeed()` always uses `getNetworkSpeed()` via
   `/sys/class/net/<iface>/statistics/` reads, bypassing the closed-source API
   entirely
-- The interface is re-detected on every 3-second collection cycle so mwan3
-  failover is picked up automatically
+- The interface is re-detected on every collection cycle so mwan3 failover
+  is picked up automatically
+
+### Speed Measurement: Rolling 10-Second Window
+
+The original `getNetworkSpeed()` sampled over a ~1 second window, causing
+visible flicker on traffic patterns with natural bursts and pauses (e.g.
+adaptive bitrate video streaming).
+
+`getNetworkSpeed()` now maintains a 3-entry ring buffer of interface byte
+counter snapshots. On each call it records a new snapshot; once 3 snapshots
+exist the delta between the oldest and newest covers ~10 seconds of traffic,
+giving a stable rolling average. The collection interval is 5 seconds, so
+the window advances every 5 seconds with no blocking sleep.
+
+On startup the display shows `-` for `WanUP`/`WanDOWN` until the buffer
+warms up (after ~10 seconds).
 
 > Note: The web UI `up_speed`/`down_speed` fields remain `0` for non-standard
 > WAN interfaces — that code is closed source and out of scope. Only the display
@@ -89,7 +104,7 @@ nix run .#rollback-pcat2           # rollback if needed
 | **Linux System** | 2 seconds | CPU, memory, uptime, disk, temp | `collectLinuxData()` |
 | **Battery** | 1 second | SOC, voltage, current, charging status | `collectBatteryData()` |
 | **Network Basic** | 2 seconds | Local IP, WAN IP, public IP, SSID | `collectNetworkData()` |
-| **Network Speed** | 3 seconds | WAN upload/download speeds | `collectWANNetworkSpeed()` |
+| **Network Speed** | 5 seconds | WAN upload/download speeds (10s rolling average) | `collectWANNetworkSpeed()` |
 
 #### External APIs
 | API Source | Collection Interval | Data Includes | Function |

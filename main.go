@@ -128,7 +128,7 @@ var (
 	// Current intervals (can be modified by idle state)
 	batteryDataInterval   = 1 * time.Second
 	dataGatherInterval    = 2 * time.Second
-	networkGatherInterval = 3 * time.Second
+	networkGatherInterval = 5 * time.Second
 
 	// Idle state management
 	idleMultiplier     = 10

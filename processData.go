@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -162,10 +163,26 @@ type NetworkStats struct {
 	LastMonthUsed float64 `json:"last_month_used"`
 }
 
-// NetworkSpeed represents upload/download in bytes per second
+// NetworkSpeed represents upload/download in Mbps
 type NetworkSpeed struct {
 	UploadMbps   float64
 	DownloadMbps float64
+}
+
+// speedSnapshot holds a single sample of interface byte counters.
+type speedSnapshot struct {
+	rx    uint64
+	tx    uint64
+	taken time.Time
+}
+
+// wanSpeedState holds the rolling window state for getNetworkSpeed.
+// The ring buffer stores the last 3 snapshots; once 3 exist the oldest
+// and newest bracket a ~10s window (at the default 5s collection interval).
+var wanSpeedState struct {
+	mu        sync.Mutex
+	snapshots [3]speedSnapshot
+	count     int
 }
 
 func collectBatteryData() {
@@ -424,9 +441,17 @@ func collectWANNetworkSpeed() {
 
 	netData, err := getNetworkSpeed(iface)
 	if err != nil {
-		log.Printf("Could not get network speed: %v\n", err)
-		globalData.Store("WanUP", "0")
-		globalData.Store("WanDOWN", "0")
+		if err.Error() == "warming up" {
+			// Not enough history yet — show - until the first window completes
+			globalData.Store("WanUP", "-")
+			globalData.Store("WanDOWN", "-")
+			globalData.Store("WanUP_Unit", "")
+			globalData.Store("WanDOWN_Unit", "")
+		} else {
+			log.Printf("Could not get network speed: %v\n", err)
+			globalData.Store("WanUP", "0")
+			globalData.Store("WanDOWN", "0")
+		}
 		return
 	}
 	wanUPVal, wanUPUnit := formatSpeed(netData.UploadMbps)
@@ -971,27 +996,45 @@ func getSSID2() (string, error) {
 	return "", fmt.Errorf("SSID could not be determined")
 }
 
-// getNetworkSpeed calculates instant network speed for the specified interface.
+// getNetworkSpeed returns WAN speed using a rolling 10-second window.
+//
+// Each call takes a snapshot of the interface byte counters and stores it in a
+// 3-entry ring buffer. Once 3 snapshots exist (after 2 collection intervals),
+// the delta between the oldest and newest entries covers ~10 seconds of traffic.
+// The window advances on every call — no blocking sleep.
+//
+// Returns an error with message "warming up" until the buffer is full, which
+// callers should treat as a pending state rather than a hard failure.
 func getNetworkSpeed(iface string) (NetworkSpeed, error) {
-	rx1, tx1, err := getInterfaceBytes(iface)
+	rx, tx, err := getInterfaceBytes(iface)
 	if err != nil {
 		return NetworkSpeed{}, err
 	}
 
-	// Reduced sampling interval for better responsiveness
-	time.Sleep(999 * time.Millisecond) // Reduced from 1999ms to 999ms
+	wanSpeedState.mu.Lock()
+	defer wanSpeedState.mu.Unlock()
 
-	rx2, tx2, err := getInterfaceBytes(iface)
-	if err != nil {
-		return NetworkSpeed{}, err
+	idx := wanSpeedState.count % 3
+	wanSpeedState.snapshots[idx] = speedSnapshot{rx: rx, tx: tx, taken: time.Now()}
+	wanSpeedState.count++
+
+	if wanSpeedState.count < 3 {
+		return NetworkSpeed{}, fmt.Errorf("warming up")
 	}
 
-	downloadMbps := float64(rx2-rx1) / 1024 / 128 / 1 // Adjusted for 1 second
-	uploadMbps := float64(tx2-tx1) / 1024 / 128 / 1   // Adjusted for 1 second
+	// oldest slot is the one we just overwrote in the next iteration,
+	// i.e. the entry at the current write index (count % 3).
+	newest := wanSpeedState.snapshots[(wanSpeedState.count-1)%3]
+	oldest := wanSpeedState.snapshots[wanSpeedState.count%3]
+
+	elapsed := newest.taken.Sub(oldest.taken).Seconds()
+	if elapsed <= 0 {
+		return NetworkSpeed{}, fmt.Errorf("invalid elapsed time")
+	}
 
 	return NetworkSpeed{
-		UploadMbps:   uploadMbps,
-		DownloadMbps: downloadMbps,
+		DownloadMbps: float64(newest.rx-oldest.rx) / 1024 / 128 / elapsed,
+		UploadMbps:   float64(newest.tx-oldest.tx) / 1024 / 128 / elapsed,
 	}, nil
 }
 
